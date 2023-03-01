@@ -29,7 +29,7 @@ def train(model, device, loader, optimizer):
 
     for step, batch in enumerate(tqdm(loader, desc="Iteration")):
         batch = batch.to(device)
-        pred = model(batch.x, batch.edge_index, batch.edge_attr, batch.batch)
+        pred = model(batch.x_motif, batch.edge_index_motif, batch.edge_attr_motif, batch.x_motif_batch)
         y = batch.y.view(pred.shape).to(torch.float64)
 
         #Whether y is non-null or not.
@@ -243,11 +243,11 @@ def main():
     print(train_dataset[0])
 
     if args.dataset == 'freesolv':
-        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers = args.num_workers, drop_last=True)
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, follow_batch=['x_s', 'x_motif'], shuffle=True, num_workers = args.num_workers, drop_last=True)
     else:
-        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers = args.num_workers)
-    val_loader = DataLoader(valid_dataset, batch_size=args.batch_size, shuffle=False, num_workers = args.num_workers)
-    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers = args.num_workers)
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, follow_batch=['x_s', 'x_motif'], shuffle=True, num_workers = args.num_workers)
+    val_loader = DataLoader(valid_dataset, batch_size=args.batch_size, follow_batch=['x_s', 'x_motif'], shuffle=False, num_workers = args.num_workers)
+    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, follow_batch=['x_s', 'x_motif'], shuffle=False, num_workers = args.num_workers)
 
     #set up model
     model = GNN_graphpred(args.num_layer, args.emb_dim, num_tasks, JK = args.JK, drop_ratio = args.dropout_ratio, gnn_type = args.gnn_type)

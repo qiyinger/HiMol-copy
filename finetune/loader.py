@@ -15,6 +15,8 @@ from rdkit.Chem.rdMolDescriptors import GetMorganFingerprintAsBitVect
 from torch.utils import data
 from torch_geometric.data import Data
 from torch_geometric.data import InMemoryDataset
+from torch_geometric.data import Data
+
 from torch_geometric.data import Batch
 from itertools import repeat, product, chain
 from chemutils import get_mol, get_clique_mol
@@ -184,8 +186,8 @@ def mol_to_graph_data_obj_simple(mol):
     num_motif = len(cliques)
     if num_motif > 0:
         motif_x = torch.tensor([[120, 0]]).repeat_interleave(num_motif, dim=0).to(x_nosuper.device)
-        x = torch.cat((x_nosuper, motif_x, super_x), dim=0)
-
+        x_motif = torch.cat((x_nosuper, motif_x, super_x), dim=0)
+        x = x_nosuper
         motif_edge_index = []
         for k, motif in enumerate(cliques):
             motif_edge_index = motif_edge_index + [[i, num_atoms+k] for i in motif]
@@ -193,7 +195,8 @@ def mol_to_graph_data_obj_simple(mol):
 
         super_edge_index = [[num_atoms+i, num_atoms+num_motif] for i in range(num_motif)]
         super_edge_index = torch.tensor(np.array(super_edge_index).T, dtype=torch.long).to(edge_index_nosuper.device)
-        edge_index = torch.cat((edge_index_nosuper, motif_edge_index, super_edge_index), dim=1)
+        edge_index_motif = torch.cat((edge_index_nosuper, motif_edge_index, super_edge_index), dim=1)
+        edge_index = edge_index_nosuper
 
         motif_edge_attr = torch.zeros(motif_edge_index.size()[1], 2)
         motif_edge_attr[:,0] = 6 
@@ -202,27 +205,33 @@ def mol_to_graph_data_obj_simple(mol):
         super_edge_attr = torch.zeros(num_motif, 2)
         super_edge_attr[:,0] = 5 
         super_edge_attr = super_edge_attr.to(edge_attr_nosuper.dtype).to(edge_attr_nosuper.device)
-        edge_attr = torch.cat((edge_attr_nosuper, motif_edge_attr, super_edge_attr), dim = 0)
+        edge_attr_motif = torch.cat((edge_attr_nosuper, motif_edge_attr, super_edge_attr), dim = 0)
+        edge_attr = edge_attr_nosuper
 
-        num_part = (num_atoms, num_motif, 1)
+        num_part = torch.tensor([num_atoms, num_motif, 1])
 
     else:
-        x = torch.cat((x_nosuper, super_x), dim=0)
+        x_motif = torch.cat((x_nosuper, super_x), dim=0)
+        x = x_nosuper
 
         super_edge_index = [[i, num_atoms] for i in range(num_atoms)]
         super_edge_index = torch.tensor(np.array(super_edge_index).T, dtype=torch.long).to(edge_index_nosuper.device)
-        edge_index = torch.cat((edge_index_nosuper, super_edge_index), dim=1)
+        edge_index_motif = torch.cat((edge_index_nosuper, super_edge_index), dim=1)
+        edge_index = edge_index_nosuper
 
         super_edge_attr = torch.zeros(num_atoms, 2)
         super_edge_attr[:,0] = 5 #bond type for self-loop edge
         super_edge_attr = super_edge_attr.to(edge_attr_nosuper.dtype).to(edge_attr_nosuper.device)
-        edge_attr = torch.cat((edge_attr_nosuper, super_edge_attr), dim = 0)
+        edge_attr_motif = torch.cat((edge_attr_nosuper, super_edge_attr), dim = 0)
+        edge_attr = edge_attr_nosuper
 
-        num_part = (num_atoms, 0, 1)
+        num_part = torch.tensor([num_atoms, 0, 1])
 
-    data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
+    pair_data = PairData(x_s=x, edge_index_s=edge_index, edge_attr_s=edge_attr,
+                         x_motif=x_motif, edge_index_motif=edge_index_motif, edge_attr_motif=edge_attr_motif)
+    data = Data(x=x_motif, edge_index=edge_index_motif, edge_attr=edge_attr_motif, num_part=num_part)
 
-    return data
+    return pair_data
 
 
 
@@ -431,10 +440,31 @@ def create_standardized_mol_id(smiles):
     else:
         return
 
+
+class PairData(Data):
+    def __init__(self, edge_index_s=None, edge_attr_s=None, x_s=None, edge_index_motif=None, edge_attr_motif=None, x_motif=None):
+        super().__init__()
+        self.edge_index_s = edge_index_s
+        self.edge_attr_s = edge_attr_s
+        self.x_s = x_s
+
+        self.edge_index_motif = edge_index_motif
+        self.edge_attr_motif = edge_attr_motif
+        self.x_motif = x_motif
+
+    def __inc__(self, key, value, *args, **kwargs):
+        if key == 'edge_index_s':
+            return self.x_s.size(0)
+        if key == 'edge_index_motif':
+            return self.x_motif.size(0)
+        else:
+            return super(PairData, self).__inc__(key, value, *args, **kwargs)
+
+
 class MoleculeDataset(InMemoryDataset):
     def __init__(self,
                  root,
-                 #data = None,
+                 #data : PairData,
                  #slices = None,
                  transform=None,
                  pre_transform=None,
@@ -463,8 +493,8 @@ class MoleculeDataset(InMemoryDataset):
             self.data, self.slices = torch.load(self.processed_paths[0])
 
 
-    def get(self, idx):
-        data = Data()
+    def get(self, idx) -> PairData:
+        data = PairData()
         for key in self.data.keys:
             item, slices = self.data[key], self.slices[key]
             s = list(repeat(slice(None), item.dim()))
